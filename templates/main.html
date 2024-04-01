@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+
+<script type="module">
+    import * as Turbo from "https://cdn.skypack.dev/pin/@hotwired/turbo@v7.1.0-RBjb2wnkmosSQVoP27jT/min/@hotwired/turbo.js";
+    Turbo.disconnectStreamSource(window.web_sock)
+    window.web_sock = new WebSocket(`ws${location.protocol.substring(4)}//${location.host}/pa_ws`);
+    window.web_sock.addEventListener('close', function() {document.getElementById("body").innerHTML = "DISCONNECTED, REFRESH TO CONTINUE";});
+    Turbo.connectStreamSource(window.web_sock);
+</script>
+
+<script>
+function submit_ws(form)
+{
+    let form_data = JSON.stringify(Object.fromEntries(new FormData(form)));
+    web_sock.send(form_data);
+    return false;
+}
+</script>
+
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>To-Do List Tracker</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        margin: 0;
+        padding: 0;
+        background-color: #f4f4f4;
+    }
+    .container {
+        max-width: 600px;
+        margin: 20px auto;
+        background-color: #fff;
+        padding: 20px;
+        border-radius: 5px;
+        box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+    }
+    h1, h2 {
+        text-align: center;
+    }
+    input[type="text"], input[type="password"], input[type="submit"] {
+        width: 100%;
+        padding: 10px;
+        margin-bottom: 10px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+        box-sizing: border-box;
+    }
+    ul {
+        list-style-type: none;
+        padding: 0;
+    }
+    li {
+        padding: 10px;
+        border-bottom: 1px solid #ccc;
+        cursor: pointer;
+    }
+    li:last-child {
+        border-bottom: none;
+    }
+    .delete-btn {
+        float: right;
+        background-color: #ff6347;
+        color: #fff;
+        border: none;
+        padding: 5px 10px;
+        border-radius: 3px;
+        cursor: pointer;
+    }
+
+</style>
+</head>
+<body>
+<div class="container" id="body"></div>
+</body>
+</html>
