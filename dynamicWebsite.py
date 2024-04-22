@@ -29,7 +29,6 @@ def updatePackage():
         print(f"Ignoring version check for {__packagename__} (Failed)")
 
 
-
 class Imports:
     from typing import Any
     from flask import Flask, make_response, render_template_string
