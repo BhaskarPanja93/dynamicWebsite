@@ -1,7 +1,37 @@
 from __future__ import annotations
+__version__ = "0.0.1"
+__packagename__ = "dynamicWebsite"
+
+
+def updatePackage():
+    from time import sleep
+    from json import loads
+    import http.client
+    print(f"Checking updates for Package {__packagename__}")
+    try:
+        host = "pypi.org"
+        conn = http.client.HTTPSConnection(host, 443)
+        conn.request("GET", f"/pypi/{__packagename__}/json")
+        data = loads(conn.getresponse().read())
+        latest = data['info']['version']
+        if latest != __version__:
+            try:
+                import pip
+                pip.main(["install", __packagename__, "--upgrade"])
+                print(f"\nUpdated package {__packagename__} v{__version__} to v{latest}\nPlease restart the program for changes to take effect")
+                sleep(3)
+            except:
+                print(f"\nFailed to update package {__packagename__} v{__version__} (Latest: v{latest})\nPlease consider using pip install {__packagename__} --upgrade")
+                sleep(3)
+        else:
+            print(f"Package {__packagename__} already the latest version")
+    except:
+        print(f"Ignoring version check for {__packagename__} (Failed)")
+
 
 
 class Imports:
+    from typing import Any
     from flask import Flask, make_response, render_template_string
     from enum import Enum
     from json import dumps, loads
@@ -15,49 +45,62 @@ class Imports:
 
 
 class Errors:
+    """
+    Contains all Error classes that will be used by the package
+    """
     class ViewerDisconnected(Exception):
+        """
+        Raised when the visitor has disconnected or has a broken Pipe
+        """
+        pass
+    class InvalidHTMLData(Exception):
+        """
+        Raised when an invalid object is passed to send to visitor
+        """
         pass
 
 
 class TurboMethods(Imports.Enum):
-    newDiv = "new"
-    update = "update"
-    replace = "replace"
-    remove = "remove"
+    """
+    All turbo methods of updating content allowed by turbo app
+    """
+    newDiv = 0
+    update = 1
+    replace = 2
+    remove = 3
 
 
 class Extras:
-
+    """
+    All presets and prebuilt HTML templates will be available here
+    """
     @staticmethod
-    def HTML(extraHeads: str, WSRoute):
+    def baseHTML(head:str, WSRoute:str, title:str, resetOnDisconnect:bool) -> str:
+        """
+        Minimalistic HTML with no extra functionality
+        :param head: (optional) Extra scripts or styles to be added to the head
+        :param WSRoute: The route to websocket
+        :param title: (optional) The title for the webpage
+        :param resetOnDisconnect: (optional) Whether the client body be cleaned upon websocket disconnection
+        :return:
+        """
         return f"""
         <html>
             <head>
-                <script type="module">
-                import * as Turbo from "https://cdn.skypack.dev/pin/@hotwired/turbo@v7.1.0-RBjb2wnkmosSQVoP27jT/min/@hotwired/turbo.js";
-                Turbo.disconnectStreamSource(window.web_sock)
-                window.web_sock = new WebSocket(`ws${{location.protocol.substring(4)}}//${{location.host}}{WSRoute}`);
-                window.web_sock.addEventListener('close', function() {{document.getElementById("mainDiv").innerHTML = "DISCONNECTED, REFRESH TO CONTINUE";}});
-                Turbo.connectStreamSource(window.web_sock);
-            </script>
-            <script>
-                function submit_ws(form) 
-                {{
-                    let form_data = JSON.stringify(Object.fromEntries(new FormData(form)));
-                    web_sock.send(form_data);
-                    return false;
-                }}
-                </script>
-            {extraHeads}
-            <title>Main Page</title>
+                <script type="module">import * as Turbo from "https://cdn.skypack.dev/pin/@hotwired/turbo@v7.1.0-RBjb2wnkmosSQVoP27jT/min/@hotwired/turbo.js";Turbo.disconnectStreamSource(window.web_sock);window.web_sock = new WebSocket(`ws${{location.protocol.substring(4)}}//${{location.host}}{WSRoute}`); {"window.web_sock.addEventListener('close', function() {document.getElementById('mainDiv').innerHTML = 'DISCONNECTED, REFRESH TO CONTINUE';});" if resetOnDisconnect else ""}Turbo.connectStreamSource(window.web_sock);</script>
+                <script>function submit_ws(form){{let form_data = JSON.stringify(Object.fromEntries(new FormData(form)));web_sock.send(form_data);return false;}}</script>
+                {head}
+                <title>{title}</title>
             </head>
-            <body>
-                <div id="mainDiv"></div>
-            </body>
+            <body><div id="mainDiv"></div></body>
         </html>
-    """
+        """
+
 
 class Cookie:
+    """
+    Internal DataStructure to hold a visitor's uniquely identifying information and methods to convert to and from cookies
+    """
     def __init__(self):
         self.isValid = True
         self.hostURL = ""
@@ -160,6 +203,9 @@ class Cookie:
 
 
 class BaseViewer:
+    """
+    Internal (BASE) Datastructure to hold all information regarding individual visitor
+    """
     def __init__(self, _id: str, WSList: list, cookie: Cookie, turbo_app: ModifiedTurbo, purposeList: list[str]):
         self.__idleSender = True
         self.__sendQueue = []
@@ -173,9 +219,14 @@ class BaseViewer:
         self.viewerID = _id
         self.WSList = WSList
         self.cookie: Cookie = cookie
-        self.__generateHidden(purposeList)
+        self.__encryptPurposes(purposeList)
 
-    def __generateHidden(self, purposeList: list[str]):
+    def __encryptPurposes(self, purposeList: list[str]) -> None:
+        """
+        Take in a list of all form purposes and encrypt them to send to visitor when needed
+        :param purposeList: List of all the purpose strings
+        :return:
+        """
         for purposeName in purposeList:
             while True:
                 hiddenString = Imports.StringGen().AlphaNumeric(10, 10)
@@ -183,24 +234,29 @@ class BaseViewer:
             self.purposeToHidden[purposeName] = hiddenString
             self.hiddenToPurpose[hiddenString] = purposeName
 
-    def __startFlaskSender(self):
+    def __startFlaskSender(self) -> None:
+        """
+        Private method to start executing all pending actions for current visitor. Has to be called everytime there is a new action queued
+        :return:
+        """
         if self.__idleSender:
             self.__idleSender = False
         else:
             return
-        while self.__sendQueue and self.isActive():
-            task = self.__sendQueue[0]
+        while len(self.__sendQueue)!=0 and self.isActive():
+            task = self.__sendQueue.pop(0)
             stream, htmlData, divName = task
-            try:
-                self.turboApp.push(stream, to=self.viewerID)
-            except:
-                break
+            try: self.turboApp.push(stream, to=self.viewerID)
+            except: break
             self.clientContentCache[divName] = htmlData
-            self.__sendQueue.pop(0)
         self.__idleSender = True
 
-    def __stripSecurities(self, form: dict):
-        print(form)
+    def __stripSecurities(self, form: dict) -> dict|None:
+        """
+        Upon form submit through websocket CSRF and other security parameters are checked and removed and returns a clean form dictionary with no extra parameters. Returns None if Securities don't match
+        :param form: Form dictionary received from client
+        :return:
+        """
         if self.isActive():
             if "PURPOSE" not in form or "CSRF" not in form: return
             receivedPurpose: str = form.pop("PURPOSE")
@@ -215,13 +271,20 @@ class BaseViewer:
             form["PURPOSE"] = self.hiddenToPurpose.get(realPurpose)
             return form
 
-    def isActive(self):
-        try:
-            return sorted(self.turboApp.clients.get(self.viewerID)) == sorted(self.WSList)
-        except:
-            return False
+    def isActive(self) -> bool:
+        """
+        Check if the current viewer's ID is still in owning turbo app active list
+        :return:
+        """
+        try: return sorted(self.turboApp.clients.get(self.viewerID)) == sorted(self.WSList)
+        except: return False
 
-    def addCSRF(self, realPurpose: str):
+    def addCSRF(self, realPurpose: str) -> str:
+        """
+        Generates hidden tags with CSRF and PURPOSE tags to be used in forms
+        :param realPurpose: The purpose of the form submit, must be present in the purposeList when calling the app-create function
+        :return:
+        """
         hiddenPurpose = self.purposeToHidden[realPurpose]
         while True:  # while needed
             token = Imports.StringGen().AlphaNumeric(_min=5, _max=10)
@@ -233,56 +296,80 @@ class BaseViewer:
                 self.__activeCSRF[hiddenPurpose][purposeString] = csrf
                 return f"""<input type="hidden" name="PURPOSE" value="{purposeString}"><input type="hidden" name="CSRF" value="{csrf}">"""
 
-    def turboReceive(self, WSObj):
+    def turboReceive(self, WSObj) -> dict|None:
+        """
+        Constantly keep watching for data received from websocket, strip the securities and then return the cleaned Dictionary
+        :param WSObj:
+        :return:
+        """
         while True:  # while needed
             try:
                 received = WSObj.receive(timeout=5)
-                if self.isActive():
-                    if received:
+                if received:
+                    if self.isActive():
                         stripped = self.__stripSecurities(Imports.loads(received))
                         if stripped is not None: return stripped
-                else:
-                    raise Errors.ViewerDisconnected
-            except:
-                break
-        self.turboApp.activeViewers.remove(self)
+                    else: raise Errors.ViewerDisconnected
+            except: return self.turboApp.activeViewers.remove(self)
 
-    def queueTurboAction(self, htmlData: str, divName: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0):
+    def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0) -> str|None:
+        """
+        Method to queue live update actions to be executed on current visitor. All actions get queued up and executed sequentially
+        :param htmlData: The data to be sent to the client, can be of type str or bytes or any JSON serializable or an object with the __str__ method
+        :param divID: The target div ID
+        :param method: The kind of action to perform
+        :param nonBlockingWait: Duration to wait before executing the action (doesn't block the calling function)
+        :param removeAfter: Duration to wait before removing the div entirely. 0 means the div isn't supposed to be removed
+        :param blockingWait: Duration to wait before executing the action (blocks the calling function)
+        :return:
+        """
         if type(htmlData) != str:
-            htmlData = str(htmlData)
+            try: htmlData = htmlData.decode()
+            except:
+                try: htmlData = Imports.dumps(htmlData)
+                except:
+                    try: htmlData = str(htmlData)
+                    except: raise Errors.InvalidHTMLData
 
         if nonBlockingWait > 0:
             blockingWait = nonBlockingWait
-            Imports.Thread(target=self.queueTurboAction, args=(htmlData, divName, method, 0, removeAfter, blockingWait)).start()
+            Imports.Thread(target=self.queueTurboAction, args=(htmlData, divID, method, 0, removeAfter, blockingWait)).start()
             return
 
         if blockingWait > 0:
-            Imports.sleep(blockingWait)
-            self.queueTurboAction(htmlData, divName, method, 0, removeAfter)
-            return
+            Imports.sleep(0 if blockingWait<0.001 else blockingWait)
+            return self.queueTurboAction(htmlData, divID, method, 0, removeAfter)
+
 
         if method in [self.turboApp.methods.newDiv, self.turboApp.methods.newDiv.value]:
-            readDivName = divName
+            readDivID = divID
             while True:  # while needed
-                divName = f"{readDivName}_{Imports.StringGen().AlphaNumeric(_min=5, _max=30)}"
-                if divName not in self.clientContentCache:
-                    self.clientContentCache[divName] = ""
-                    self.queueTurboAction(f"""<div id='{divName}'></div><div id='{readDivName}_create'></div>""", f'{readDivName}_create', self.turboApp.methods.replace, 0, 0)
+                divID = f"{readDivID}_{Imports.StringGen().AlphaNumeric(_min=5, _max=30)}"
+                if divID not in self.clientContentCache:
+                    self.clientContentCache[divID] = ""
+                    self.queueTurboAction(f"""<div id='{divID}'></div><div id='{readDivID}_create'></div>""", f'{readDivID}_create', self.turboApp.methods.replace, 0, 0)
                     break
-            self.queueTurboAction(htmlData, divName, self.turboApp.methods.update, nonBlockingWait, removeAfter)
+            self.queueTurboAction(htmlData, divID, self.turboApp.methods.update, nonBlockingWait, removeAfter)
+
         elif method in [self.turboApp.methods.replace, self.turboApp.methods.replace.value]:
-            self.__sendQueue.append([self.turboApp.replace(htmlData, divName), htmlData, divName])
+            self.__sendQueue.append([self.turboApp.replace(htmlData, divID), htmlData, divID])
             self.__startFlaskSender()
+
         elif method in [self.turboApp.methods.remove, self.turboApp.methods.remove.value]:
-            self.__sendQueue.append([self.turboApp.remove(divName), "", divName])
+            self.__sendQueue.append([self.turboApp.remove(divID), "", divID])
             self.__startFlaskSender()
+
         elif method in [self.turboApp.methods.update, self.turboApp.methods.update.value]:
-            if divName not in self.clientContentCache or self.clientContentCache[divName] != htmlData: self.__sendQueue.append([self.turboApp.update(htmlData, divName), htmlData, divName])
+            if divID not in self.clientContentCache or self.clientContentCache[divID] != htmlData: self.__sendQueue.append([self.turboApp.update(htmlData, divID), htmlData, divID])
             self.__startFlaskSender()
-            if removeAfter: self.queueTurboAction('', divName, self.turboApp.methods.remove, removeAfter, 0, removeAfter)
-        return divName
+            if removeAfter: self.queueTurboAction("", divID, self.turboApp.methods.remove, removeAfter, 0, removeAfter)
+
+        return divID
 
 class ModifiedTurbo(Imports.Turbo):
+    """
+    Derived TurboFlask's class with extra functionalities and methods
+    """
     def __init__(self, app=None, route=''):
         self.__route = route
         self.__WSWaitViewerIDs: list[str] = []
@@ -298,6 +385,11 @@ class ModifiedTurbo(Imports.Turbo):
         app.context_processor(self.context_processor)
 
     def checkAndWSBlockViewerID(self, viewerID):
+        """
+        Save viewer ID as pending to connect web socket. Keeps the ViewerID for 60 seconds till the websocket request is made and then freed. No new viewer can get the pending viewer ID
+        :param viewerID: String representing the Viewer
+        :return:
+        """
         def freeViewerID(viewerID):
             Imports.sleep(60)
             if viewerID in self.__WSWaitViewerIDs:
@@ -311,20 +403,27 @@ class ModifiedTurbo(Imports.Turbo):
             return False
 
     def consumeWSBlockedViewerID(self, viewerID):
-        if viewerID not in self.__WSWaitViewerIDs:
-            return False
-        else:
-            self.__WSWaitViewerIDs.remove(viewerID)
-            return True
+        """
+        Check if viewer ID has pending websocket connection to be made, if so remove from pending and assign the websocket to the viewer
+        :param viewerID: String representing the Viewer
+        :return:
+        """
+        if viewerID not in self.__WSWaitViewerIDs: return False
+        else: return not self.__WSWaitViewerIDs.remove(viewerID)
 
-    def generateViewerID(self):
+    def generateViewerID(self) -> str:
+        """
+        Generate a new unique viewerID string
+        :return:
+        """
         while True:  # while needed
             viewerID = Imports.StringGen().AlphaNumeric(30, 50)
             if viewerID not in self.clients and viewerID not in self.__WSWaitViewerIDs:
                 self.checkAndWSBlockViewerID(viewerID)
                 return viewerID
 
-def createApps(formCallback, newVisitor, appName, homeRoute, WSRoute, fernetKey, formPurposeList, extraHeads):
+def createApps(formCallback, newVisitor, formPurposeList:list[str], appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", title:str="Live", resetOnDisconnect:bool=True):
+    """TODO: make a dynamically updating purposelist so everytime a new entry is passed it gets added and dont have to give starting"""
     baseApp = Imports.Flask(appName)
     turboApp = ModifiedTurbo(baseApp, WSRoute)
 
@@ -333,12 +432,9 @@ def createApps(formCallback, newVisitor, appName, homeRoute, WSRoute, fernetKey,
         cookieObj = Cookie().decrypt(Imports.request.cookies, fernetKey)
         if not cookieObj.checkValid():
             cookieObj = Cookie().readRequest(Imports.request)
-            viewerID = turboApp.generateViewerID()
-            cookieObj.viewerID = viewerID
-            cookieObj.delim = Imports.StringGen().AlphaNumeric(10, 10)
+            cookieObj.viewerID = turboApp.generateViewerID()
         else: turboApp.checkAndWSBlockViewerID(cookieObj.viewerID)
-        response = Imports.make_response(Imports.render_template_string(Extras.HTML(extraHeads, WSRoute)))
-        return cookieObj.attachToResponse(response, fernetKey)
+        return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(extraHeads, WSRoute, title, resetOnDisconnect))), fernetKey)
 
 
     @baseApp.before_request
@@ -353,10 +449,8 @@ def createApps(formCallback, newVisitor, appName, homeRoute, WSRoute, fernetKey,
             if Imports.request.environ.get("HTTP_X_FORWARDED_FOR") == Imports.request.headers.get("X-Forwarded-For"):
                 if Imports.request.environ.get("HTTP_X_FORWARDED_FOR") is not None:
                     address = Imports.request.environ.get("HTTP_X_FORWARDED_FOR")
-                else:
-                    address = "LOCAL"
-        else:
-            address = Imports.request.remote_addr
+                else: address = "LOCAL"
+        else: address = Imports.request.remote_addr
         Imports.request.remote_addr = address
 
 

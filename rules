@@ -11,6 +11,3 @@ combined into a fernet encoded string
 
 and Header stores the delim value for unique request
 "DELIM": delim
-
-
-
