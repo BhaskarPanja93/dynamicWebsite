@@ -1,4 +1,4 @@
-# customisedLogs v0.0.2
+# dynamicWebsite v0.0.2
 
 ```pip install dynamicWebsite --upgrade```
 
