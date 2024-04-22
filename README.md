@@ -23,7 +23,6 @@ def process_form(viewerObj: BaseViewer, form: dict):
     else:
         print("Disconnected: ", viewerObj.viewerID)
 
-
 def newVisitor(viewerObj: BaseViewer):
     initial = f"""
     <h2>Submit Song Name</h2>
@@ -34,7 +33,6 @@ def newVisitor(viewerObj: BaseViewer):
     """
     viewerObj.queueTurboAction(initial, "mainDiv", viewerObj.turboApp.methods.update)
     sendForm(viewerObj)
-    
 
 extraHeads = ""
 fernetKey = 'GNwHvssnLQVKYPZk0D_Amy9m3EeSvi6Y1FiHfTO8F48='
