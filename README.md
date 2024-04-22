@@ -2,7 +2,6 @@
 
 ```pip install dynamicWebsite --upgrade```
 
-
 ###### <br>A simple way to host web server bundled with websocket to send and receive live data, from client to server, and pass live HTML changes from server to client without having to refresh the page."
 
 <br>To install: 
