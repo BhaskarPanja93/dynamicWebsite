@@ -206,7 +206,7 @@ class BaseViewer:
     """
     Internal (BASE) Datastructure to hold all information regarding individual visitor
     """
-    def __init__(self, _id: str, WSList: list, cookie: Cookie, turbo_app: ModifiedTurbo, purposeList: list[str]):
+    def __init__(self, _id: str, WSList: list, cookie: Cookie, turbo_app: ModifiedTurbo):
         self.__idleSender = True
         self.__sendQueue = []
         self.__turboIdle = True
@@ -219,20 +219,7 @@ class BaseViewer:
         self.viewerID = _id
         self.WSList = WSList
         self.cookie: Cookie = cookie
-        self.__encryptPurposes(purposeList)
 
-    def __encryptPurposes(self, purposeList: list[str]) -> None:
-        """
-        Take in a list of all form purposes and encrypt them to send to visitor when needed
-        :param purposeList: List of all the purpose strings
-        :return:
-        """
-        for purposeName in purposeList:
-            while True:
-                hiddenString = Imports.StringGen().AlphaNumeric(10, 10)
-                if hiddenString not in list(self.purposeToHidden.values()): break
-            self.purposeToHidden[purposeName] = hiddenString
-            self.hiddenToPurpose[hiddenString] = purposeName
 
     def __startFlaskSender(self) -> None:
         """
@@ -285,6 +272,12 @@ class BaseViewer:
         :param realPurpose: The purpose of the form submit, must be present in the purposeList when calling the app-create function
         :return:
         """
+        if realPurpose not in self.purposeToHidden:
+            while True:
+                hiddenString = Imports.StringGen().AlphaNumeric(10, 10)
+                if hiddenString not in list(self.purposeToHidden.values()): break
+            self.purposeToHidden[realPurpose] = hiddenString
+            self.hiddenToPurpose[hiddenString] = realPurpose
         hiddenPurpose = self.purposeToHidden[realPurpose]
         while True:  # while needed
             token = Imports.StringGen().AlphaNumeric(_min=5, _max=10)
@@ -422,8 +415,8 @@ class ModifiedTurbo(Imports.Turbo):
                 self.checkAndWSBlockViewerID(viewerID)
                 return viewerID
 
-def createApps(formCallback, newVisitor, formPurposeList:list[str], appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", title:str="Live", resetOnDisconnect:bool=True):
-    """TODO: make a dynamically updating purposelist so everytime a new entry is passed it gets added and dont have to give starting"""
+
+def createApps(formCallback, newVisitor, appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", title:str="Live", resetOnDisconnect:bool=True):
     baseApp = Imports.Flask(appName)
     turboApp = ModifiedTurbo(baseApp, WSRoute)
 
@@ -435,6 +428,23 @@ def createApps(formCallback, newVisitor, formPurposeList:list[str], appName:str=
             cookieObj.viewerID = turboApp.generateViewerID()
         else: turboApp.checkAndWSBlockViewerID(cookieObj.viewerID)
         return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(extraHeads, WSRoute, title, resetOnDisconnect))), fernetKey)
+
+
+    @turboApp.sock.route(WSRoute)
+    def _turbo_stream(WSObj):
+        cookieObjRequest = Cookie().readRequest(Imports.request)
+        cookieObj = Cookie().decrypt(Imports.request.cookies, fernetKey)
+        if cookieObjRequest.isValid and cookieObj == (Cookie().decrypt(Imports.request.cookies, fernetKey)):
+            if not cookieObj.checkValid() or not turboApp.consumeWSBlockedViewerID(cookieObj.viewerID): return
+            turboApp.clients[cookieObj.viewerID] = [WSObj]
+            viewerObj = BaseViewer(cookieObj.viewerID, [WSObj], cookieObj, turboApp)
+            newVisitor(viewerObj)
+            while True:
+                received = viewerObj.turboReceive(WSObj)
+                Imports.Thread(target=formCallback, args=(viewerObj, received,)).start()
+                if received is None:
+                    turboApp.clients.pop(cookieObj.viewerID)
+                    break
 
 
     @baseApp.before_request
@@ -453,20 +463,4 @@ def createApps(formCallback, newVisitor, formPurposeList:list[str], appName:str=
         else: address = Imports.request.remote_addr
         Imports.request.remote_addr = address
 
-
-    @turboApp.sock.route(WSRoute)
-    def _turbo_stream(WSObj):
-        cookieObjRequest = Cookie().readRequest(Imports.request)
-        cookieObj = Cookie().decrypt(Imports.request.cookies, fernetKey)
-        if cookieObjRequest.isValid and cookieObj == (Cookie().decrypt(Imports.request.cookies, fernetKey)):
-            if not cookieObj.checkValid() or not turboApp.consumeWSBlockedViewerID(cookieObj.viewerID): return
-            turboApp.clients[cookieObj.viewerID] = [WSObj]
-            viewerObj = BaseViewer(cookieObj.viewerID, [WSObj], cookieObj, turboApp, formPurposeList)
-            newVisitor(viewerObj)
-            while True:
-                received = viewerObj.turboReceive(WSObj)
-                Imports.Thread(target=formCallback, args=(viewerObj, received,)).start()
-                if received is None:
-                    turboApp.clients.pop(cookieObj.viewerID)
-                    break
     return baseApp, turboApp
