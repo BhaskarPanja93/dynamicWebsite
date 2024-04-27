@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __packagename__ = "dynamicWebsite"
 
 
@@ -130,7 +130,7 @@ class Cookie:
         self.remoteAddress = requestObj.remote_addr
         self.UA = requestObj.user_agent.string
         self.hostURL = requestObj.host
-        self.delim = requestObj.headers.get("DELIM")
+        self.delim = requestObj.headers.get("DELIM") or self.delim
         return self
 
     def readAnotherCookie(self, cookie: Cookie) -> Cookie:
