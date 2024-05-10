@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 __packagename__ = "dynamicWebsite"
 
 
@@ -39,8 +39,9 @@ class Imports:
     from cryptography.fernet import Fernet
     from flask import request, Response
     from flask_sock import Sock
-    from randomisedString import Generator as StringGen
     from turbo_flask import Turbo
+    from randomisedString import Generator as StringGen
+    from rateLimitedQueues import Manager as QueueManager
 
 
 class Errors:

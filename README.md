@@ -1,4 +1,4 @@
-# dynamicWebsite v1.0.2
+# dynamicWebsite v1.0.3
 
 ```pip install dynamicWebsite --upgrade```
 
