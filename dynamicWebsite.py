@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.0.3"
+__version__ = "1.1.0"
 __packagename__ = "dynamicWebsite"
 
 
@@ -87,7 +87,13 @@ class Extras:
         return f"""
         <html>
             <head>
-                <script type="module">import * as Turbo from "https://cdn.skypack.dev/pin/@hotwired/turbo@v7.1.0-RBjb2wnkmosSQVoP27jT/min/@hotwired/turbo.js";Turbo.disconnectStreamSource(window.web_sock);window.web_sock = new WebSocket(`ws${{location.protocol.substring(4)}}//${{location.host}}{WSRoute}`); {"window.web_sock.addEventListener('close', function() {document.getElementById('mainDiv').innerHTML = 'DISCONNECTED, REFRESH TO CONTINUE';});" if resetOnDisconnect else ""}Turbo.connectStreamSource(window.web_sock);</script>
+                <script src="https://cdn.jsdelivr.net/npm/@hotwired/turbo@7.3.0/dist/turbo.es2017-umd.js"></script>
+                <script>
+                    Turbo.disconnectStreamSource(window.web_sock);
+                    window.web_sock = new WebSocket(`ws${{location.protocol.substring(4)}}//${{location.host}}{WSRoute}`); 
+                    {"window.web_sock.addEventListener('close', function() {document.getElementById('mainDiv').innerHTML = 'DISCONNECTED, REFRESH TO CONTINUE';});" if resetOnDisconnect else ""}
+                    Turbo.connectStreamSource(window.web_sock);
+                </script>
                 <script>function submit_ws(form){{let form_data = JSON.stringify(Object.fromEntries(new FormData(form)));web_sock.send(form_data);return false;}}</script>
                 {head}
                 <title>{title}</title>
@@ -208,11 +214,11 @@ class BaseViewer:
     """
     def __init__(self, _id: str, WSList: list, cookie: Cookie, turbo_app: ModifiedTurbo):
         self.__idleSender = True
-        self.__sendQueue = []
         self.__turboIdle = True
         self.__activeCSRF: dict[str, dict[str, str]] = {}
         self.turboApp = turbo_app
         self.turboApp.activeViewers.append(self)
+        self.queueHandler = Imports.QueueManager()
         self.purposeToHidden = {}
         self.hiddenToPurpose = {}
         self.clientContentCache = {}
@@ -221,22 +227,18 @@ class BaseViewer:
         self.cookie: Cookie = cookie
 
 
-    def __startFlaskSender(self) -> None:
+    def __startFlaskSender(self, stream, htmlData, divName) -> None:
         """
         Private method to start executing all pending actions for current visitor. Has to be called everytime there is a new action queued
         :return:
         """
-        if self.__idleSender:
-            self.__idleSender = False
-        else:
-            return
-        while len(self.__sendQueue)!=0 and self.isActive():
-            task = self.__sendQueue.pop(0)
-            stream, htmlData, divName = task
-            try: self.turboApp.push(stream, to=self.viewerID)
-            except: break
-            self.clientContentCache[divName] = htmlData
-        self.__idleSender = True
+
+        if self.isActive():
+            try:
+                self.turboApp.push(stream, to=self.viewerID)
+                self.clientContentCache[divName] = htmlData
+            except:
+                pass
 
     def __stripSecurities(self, form: dict) -> dict|None:
         """
@@ -305,7 +307,7 @@ class BaseViewer:
                     else: raise Errors.ViewerDisconnected
             except: return self.turboApp.activeViewers.remove(self)
 
-    def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0) -> str|None:
+    def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0, newDivAttributes: dict|None = None) -> str|None:
         """
         Method to queue live update actions to be executed on current visitor. All actions get queued up and executed sequentially
         :param htmlData: The data to be sent to the client, can be of type str or bytes or any JSON serializable or an object with the __str__ method
@@ -314,6 +316,7 @@ class BaseViewer:
         :param nonBlockingWait: Duration to wait before executing the action (doesn't block the calling function)
         :param removeAfter: Duration to wait before removing the div entirely. 0 means the div isn't supposed to be removed
         :param blockingWait: Duration to wait before executing the action (blocks the calling function)
+        :param newDivAttributes: Extra attributes to pass into new div
         :return:
         """
         if type(htmlData) != str:
@@ -333,28 +336,30 @@ class BaseViewer:
             Imports.sleep(0 if blockingWait<0.001 else blockingWait)
             return self.queueTurboAction(htmlData, divID, method, 0, removeAfter)
 
-
         if method in [self.turboApp.methods.newDiv, self.turboApp.methods.newDiv.value]:
             readDivID = divID
             while True:  # while needed
                 divID = f"{readDivID}_{Imports.StringGen().AlphaNumeric(_min=5, _max=30)}"
                 if divID not in self.clientContentCache:
                     self.clientContentCache[divID] = ""
-                    self.queueTurboAction(f"""<div id='{divID}'></div><div id='{readDivID}_create'></div>""", f'{readDivID}_create', self.turboApp.methods.replace, 0, 0)
+                    divAttributes = ""
+                    if newDivAttributes:
+                        for key in newDivAttributes:
+                            value = newDivAttributes[key]
+                            divAttributes+=f' {key}=\"{value}\"'
+                    self.queueTurboAction(f"""<div id='{divID}'{divAttributes}></div><div id='{readDivID}_create'></div>""", f'{readDivID}_create', self.turboApp.methods.replace, 0, 0)
                     break
             self.queueTurboAction(htmlData, divID, self.turboApp.methods.update, nonBlockingWait, removeAfter)
 
         elif method in [self.turboApp.methods.replace, self.turboApp.methods.replace.value]:
-            self.__sendQueue.append([self.turboApp.replace(htmlData, divID), htmlData, divID])
-            self.__startFlaskSender()
+            self.queueHandler.queueAction(self.__startFlaskSender, 0, False, None, None, None, self.turboApp.replace(htmlData, divID), htmlData, divID)
 
         elif method in [self.turboApp.methods.remove, self.turboApp.methods.remove.value]:
-            self.__sendQueue.append([self.turboApp.remove(divID), "", divID])
-            self.__startFlaskSender()
+            self.queueHandler.queueAction(self.__startFlaskSender, 0, False, None, None, None, self.turboApp.remove(divID), "", divID)
 
         elif method in [self.turboApp.methods.update, self.turboApp.methods.update.value]:
-            if divID not in self.clientContentCache or self.clientContentCache[divID] != htmlData: self.__sendQueue.append([self.turboApp.update(htmlData, divID), htmlData, divID])
-            self.__startFlaskSender()
+            if divID not in self.clientContentCache or self.clientContentCache[divID] != htmlData:
+                self.queueHandler.queueAction(self.__startFlaskSender, 0, False, None, None, None, self.turboApp.update(htmlData, divID), htmlData, divID)
             if removeAfter: self.queueTurboAction("", divID, self.turboApp.methods.remove, removeAfter, 0, removeAfter)
 
         return divID
