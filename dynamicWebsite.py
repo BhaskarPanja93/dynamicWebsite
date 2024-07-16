@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 __packagename__ = "dynamicWebsite"
 
 
@@ -75,13 +75,14 @@ class Extras:
     All presets and prebuilt HTML templates will be available here
     """
     @staticmethod
-    def baseHTML(head:str, WSRoute:str, title:str, resetOnDisconnect:bool) -> str:
+    def baseHTML(extraHeads:str, WSRoute:str, title:str, resetOnDisconnect:bool, bodyBase:str) -> str:
         """
         Minimalistic HTML with no extra functionality
-        :param head: (optional) Extra scripts or styles to be added to the head
+        :param extraHeads: (optional) Extra scripts or styles to be added to the head
         :param WSRoute: The route to websocket
         :param title: (optional) The title for the webpage
         :param resetOnDisconnect: (optional) Whether the client body be cleaned upon websocket disconnection
+        :param bodyBase: Initial body element
         :return:
         """
         return f"""
@@ -94,11 +95,13 @@ class Extras:
                     {"window.web_sock.addEventListener('close', function() {document.getElementById('mainDiv').innerHTML = 'DISCONNECTED, REFRESH TO CONTINUE';});" if resetOnDisconnect else ""}
                     Turbo.connectStreamSource(window.web_sock);
                 </script>
+                
                 <script>function submit_ws(form){{let form_data = JSON.stringify(Object.fromEntries(new FormData(form)));web_sock.send(form_data);return false;}}</script>
-                {head}
+                
+                {extraHeads}
                 <title>{title}</title>
             </head>
-            <body><div id="mainDiv"></div></body>
+            {bodyBase}
         </html>
         """
 
@@ -421,7 +424,7 @@ class ModifiedTurbo(Imports.Turbo):
                 return viewerID
 
 
-def createApps(formCallback, newVisitor, appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", title:str="Live", resetOnDisconnect:bool=True):
+def createApps(formCallback, newVisitor, appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", bodyBase:str="", title:str="Live", resetOnDisconnect:bool=True):
     baseApp = Imports.Flask(appName)
     turboApp = ModifiedTurbo(baseApp, WSRoute)
 
@@ -432,7 +435,7 @@ def createApps(formCallback, newVisitor, appName:str="Live App", homeRoute:str="
             cookieObj = Cookie().readRequest(Imports.request)
             cookieObj.viewerID = turboApp.generateViewerID()
         else: turboApp.checkAndWSBlockViewerID(cookieObj.viewerID)
-        return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(extraHeads, WSRoute, title, resetOnDisconnect))), fernetKey)
+        return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(extraHeads, WSRoute, title, resetOnDisconnect, bodyBase))), fernetKey)
 
 
     @turboApp.sock.route(WSRoute)
