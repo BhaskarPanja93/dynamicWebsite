@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.3.0"
+__version__ = "1.3.1"
 __packagename__ = "dynamicWebsite"
 
 
@@ -311,6 +311,7 @@ class BaseViewer:
             except:
                 Imports.Thread(target=self.turboApp.visitorLeftCallback, args=(self,)).start()
                 self.turboApp.activeViewers.remove(self)
+                return
 
     def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0, newDivAttributes: dict|None = None) -> str|None:
         """
