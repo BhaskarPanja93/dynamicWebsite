@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 __packagename__ = "dynamicWebsite"
 
 
@@ -308,7 +308,9 @@ class BaseViewer:
                         stripped = self.__stripSecurities(Imports.loads(received))
                         if stripped is not None: return stripped
                     else: raise Errors.ViewerDisconnected
-            except: return self.turboApp.activeViewers.remove(self)
+            except:
+                Imports.Thread(target=self.turboApp.visitorLeftCallback, args=(self,)).start()
+                self.turboApp.activeViewers.remove(self)
 
     def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0, newDivAttributes: dict|None = None) -> str|None:
         """
@@ -371,7 +373,8 @@ class ModifiedTurbo(Imports.Turbo):
     """
     Derived TurboFlask's class with extra functionalities and methods
     """
-    def __init__(self, app=None, route=''):
+    def __init__(self, app=None, route='', visitorLeftCallback=None):
+        self.visitorLeftCallback = visitorLeftCallback
         self.__route = route
         self.__WSWaitViewerIDs: list[str] = []
         self.activeViewers: list[BaseViewer] = []
@@ -424,9 +427,9 @@ class ModifiedTurbo(Imports.Turbo):
                 return viewerID
 
 
-def createApps(formCallback, newVisitor, appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", bodyBase:str="", title:str="Live", resetOnDisconnect:bool=True):
+def createApps(formCallback, newVisitor, visitorLeft, appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", bodyBase:str="", title:str="Live", resetOnDisconnect:bool=True):
     baseApp = Imports.Flask(appName)
-    turboApp = ModifiedTurbo(baseApp, WSRoute)
+    turboApp = ModifiedTurbo(baseApp, WSRoute, visitorLeft)
 
     @baseApp.route(homeRoute, methods=['GET'])
     def _root_url():

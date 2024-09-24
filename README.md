@@ -1,4 +1,4 @@
-# dynamicWebsite v1.2.0
+# dynamicWebsite v1.3.0
 
 ```pip install dynamicWebsite --upgrade```
 
@@ -32,6 +32,9 @@ def newVisitor(viewerObj: BaseViewer):
     """
     viewerObj.queueTurboAction(initial, "mainDiv", viewerObj.turboApp.methods.update)
     sendForm(viewerObj)
+    
+def visitorLeft(viewerObj: BaseViewer):
+    print("Visitor Left")
 
 extraHeads = ""
 fernetKey = 'GNwHvssnLQVKYPZk0D_Amy9m3EeSvi6Y1FiHfTO8F48='
@@ -40,7 +43,7 @@ homePageRoute = "/song"
 WSRoute = f"/song_ws"
 title = "Song Player"
 resetOnDisconnect = False
-baseApp, turboApp = createApps(process_form, newVisitor, appName, homePageRoute, WSRoute, fernetKey, extraHeads, title, resetOnDisconnect)
+baseApp, turboApp = createApps(process_form, newVisitor, visitorLeft, appName, homePageRoute, WSRoute, fernetKey, extraHeads, title, resetOnDisconnect)
 
 turboApp.run("0.0.0.0", 5000)
 ```
