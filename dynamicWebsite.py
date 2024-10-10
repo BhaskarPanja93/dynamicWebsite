@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.3.1"
+__version__ = "1.4.0"
 __packagename__ = "dynamicWebsite"
 
 
@@ -31,13 +31,13 @@ def updatePackage():
 
 class Imports:
     from typing import Any
-    from flask import Flask, make_response, render_template_string
+    from base64 import b64decode
+    from flask import Flask, make_response, render_template_string, request, Response
     from enum import Enum
     from json import dumps, loads
     from threading import Thread
     from time import sleep, time
     from cryptography.fernet import Fernet
-    from flask import request, Response
     from flask_sock import Sock
     from turbo_flask import Turbo
     from randomisedString import Generator as StringGen
@@ -75,9 +75,11 @@ class Extras:
     All presets and prebuilt HTML templates will be available here
     """
     @staticmethod
-    def baseHTML(extraHeads:str, WSRoute:str, title:str, resetOnDisconnect:bool, bodyBase:str) -> str:
+    def baseHTML(CSRF:str, turboHeader:str, extraHeads:str, WSRoute:str, title:str, resetOnDisconnect:bool, bodyBase:str) -> str:
         """
         Minimalistic HTML with no extra functionality
+        :param CSRF: Handshaking CSRF
+        :param turboHeader: Module to init turbo, containing its version and other details
         :param extraHeads: (optional) Extra scripts or styles to be added to the head
         :param WSRoute: The route to websocket
         :param title: (optional) The title for the webpage
@@ -88,16 +90,154 @@ class Extras:
         return f"""
         <html>
             <head>
-                <script src="https://cdn.jsdelivr.net/npm/@hotwired/turbo@7.3.0/dist/turbo.es2017-umd.js"></script>
-                <script>
+                {turboHeader.replace("module", "")}
+                <script id="dynamicWebsiteWebsocketHandshake">
+                    document.getElementById("dynamicWebsiteWebsocketHandshake").remove();
+                
+                    function base64ArrayBuffer(arrayBuffer) 
+                    {{
+                        var base64    = ''
+                        var encodings = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+                        var bytes         = new Uint8Array(arrayBuffer)
+                        var byteLength    = bytes.byteLength
+                        var byteRemainder = byteLength % 3
+                        var mainLength    = byteLength - byteRemainder
+                        var a, b, c, d
+                        var chunk
+                        for (var i = 0; i < mainLength; i = i + 3) 
+                        {{
+                            chunk = (bytes[i] << 16) | (bytes[i + 1] << 8) | bytes[i + 2]
+                            a = (chunk & 16515072) >> 18 // 16515072 = (2^6 - 1) << 18
+                            b = (chunk & 258048)   >> 12 // 258048   = (2^6 - 1) << 12
+                            c = (chunk & 4032)     >>  6 // 4032     = (2^6 - 1) << 6
+                            d = chunk & 63               // 63       = 2^6 - 1
+                            base64 += encodings[a] + encodings[b] + encodings[c] + encodings[d]
+                        }}
+                        if (byteRemainder == 1) 
+                        {{
+                            chunk = bytes[mainLength]
+                            a = (chunk & 252) >> 2 // 252 = (2^6 - 1) << 2
+                            b = (chunk & 3)   << 4 // 3   = 2^2 - 1
+                            base64 += encodings[a] + encodings[b] + '=='
+                        }} 
+                        else if (byteRemainder == 2) 
+                        {{
+                            chunk = (bytes[mainLength] << 8) | bytes[mainLength + 1]
+                            a = (chunk & 64512) >> 10 // 64512 = (2^6 - 1) << 10
+                            b = (chunk & 1008)  >>  4 // 1008  = (2^6 - 1) << 4
+                            c = (chunk & 15)    <<  2 // 15    = 2^4 - 1
+                            base64 += encodings[a] + encodings[b] + encodings[c] + '='
+                        }}
+                        return base64
+                    }}
+                    
+                    function submit_ws(form)
+                    {{
+                        let fileUploadListName = "dynamicWebsiteUploadingFilesList";
+                        let form_data = Object.fromEntries(new FormData(form));
+                        form_data[fileUploadListName] = {{}};
+                        let filesToUpload = {{}};
+                        for (let formElementIndex = 0; formElementIndex < form.children.length; formElementIndex++)
+                        {{
+                            let element = form.children[formElementIndex];
+                            if (element.type == "file")
+                            {{
+                                let elementName = element.name;
+                                form_data[fileUploadListName][elementName] = {{}};
+                                delete form_data[elementName];
+                                for (let fileIndex = 0; fileIndex < element.files.length; fileIndex++)
+                                {{
+                                    let fileUploadId = parseInt(localStorage.dynamicWebsiteNextFileUploadId);
+                                    if (isNaN(fileUploadId) || fileUploadId >= Number.MAX_SAFE_INTEGER-1) {{fileUploadId=0;}}
+                                    localStorage.setItem('dynamicWebsiteNextFileUploadId', fileUploadId+1);
+                                    let file = element.files[fileIndex];
+                                    form_data[fileUploadListName][elementName][fileUploadId] = {{"NAME":file.name, "SIZE":file.size, "TYPE":file.type, "MAXPART":Math.ceil(file.size/window.chunk_size)-1}};
+                                    filesToUpload[fileUploadId] = file;
+                                }}
+                            }}
+                        }}
+                        
+                        window.web_sock.send(JSON.stringify(form_data));
+                        for (const [fileID, fileObj] of Object.entries(filesToUpload)) 
+                        {{
+                            window.files[fileID] = fileObj;
+                            window.global_coroutines[fileID] = setInterval(function (fileID) 
+                            {{
+                                if (window.current_file_id==null)
+                                {{
+                                    
+                                    window.current_file_id = fileID;
+                                    console.log("Sending fileID:", fileID);
+                                    clearInterval(window.global_coroutines[fileID]);
+                                    let fileObj = window.files[fileID];
+                                    window.transferred_bytes = 0;
+                                    window.to_be_transferred_bytes = fileObj.size;
+                                    
+                                    delete window.global_coroutines[fileID];
+                                    delete window.files[fileID];
+
+                                    window.current_part_index = 0;
+                                    window.last_part_index = Math.ceil(fileObj.size/window.chunk_size)-1;
+                                    for (let partIndex=0; partIndex<=window.last_part_index; partIndex++)
+                                    {{
+                                        window.file_coroutines[partIndex] = setInterval(function (fileObj, artIndex) 
+                                        {{
+                                            if (window.is_reader_idle && window.reader.readyState != window.reader.LOADING && window.web_sock.bufferedAmount < window.max_buffer_size)
+                                            {{
+                                                window.is_reader_idle = false;
+                                                clearInterval(window.file_coroutines[partIndex]);
+                                                window.current_part_index = partIndex
+                                                delete window.file_coroutines[partIndex];
+                                                let start_byte = (partIndex)*window.chunk_size
+                                                window.reader.readAsArrayBuffer(fileObj.slice(start_byte, Math.min(fileObj.size, start_byte+window.chunk_size)));
+                                            }}
+                                        }}, 20, fileObj, partIndex);
+                                    }}
+
+                                }}
+                            }}, 20, fileID);
+                        }}
+                        return false;
+                    }}
+
+                    window.global_coroutines = {{}};
+                    window.file_coroutines = {{}};
+                    window.files = {{}};
+                    window.transferred_bytes = 0;
+                    window.to_be_transferred_bytes = 0;
+                    
+                    window.chunk_size = 1024*200;
+                    window.max_buffer_size = 1024*100*10;
+                    
+                    window.reader = new FileReader();
+                    window.is_reader_idle = true;
+                    
+                    window.current_file_id = null;
+                    window.current_part_index = null;
+                    window.last_part_index = null;
+                    
+                    window.reader.onload = function(e) 
+                    {{
+                        window.web_sock.send(JSON.stringify(
+                        {{
+                            "ISFILE":true,
+                            "FILEID":window.current_file_id, 
+                            "CURRENT":window.current_part_index,
+                            "DATA":base64ArrayBuffer(e.target.result)
+                        }}
+                        ));
+                        window.transferred_bytes += window.reader.result.byteLength;
+                        console.log(window.current_file_id, window.current_part_index, window.last_part_index);
+                        if (Object.keys(window.file_coroutines).length==0) window.current_file_id = null;
+                        window.is_reader_idle = true;
+                    }}
+
                     Turbo.disconnectStreamSource(window.web_sock);
                     window.web_sock = new WebSocket(`ws${{location.protocol.substring(4)}}//${{location.host}}{WSRoute}`); 
                     {"window.web_sock.addEventListener('close', function() {document.getElementById('mainDiv').innerHTML = 'DISCONNECTED, REFRESH TO CONTINUE';});" if resetOnDisconnect else ""}
                     Turbo.connectStreamSource(window.web_sock);
+                    window.web_sock.onopen = function() {{window.web_sock.send("{CSRF}");}};
                 </script>
-                
-                <script>function submit_ws(form){{let form_data = JSON.stringify(Object.fromEntries(new FormData(form)));web_sock.send(form_data);return false;}}</script>
-                
                 {extraHeads}
                 <title>{title}</title>
             </head>
@@ -111,12 +251,12 @@ class Cookie:
     Internal DataStructure to hold a visitor's uniquely identifying information and methods to convert to and from cookies
     """
     def __init__(self):
-        self.isValid = True
-        self.hostURL = ""
         self.remoteAddress = ""
         self.UA = ""
         self.viewerID = ""
-        self.delim = Imports.StringGen().AlphaNumeric(20, 20)
+        self.hostURL = ""
+        self.origin = ""
+        self.CSRF = ""
 
     def readDict(self, inputDict: dict) -> Cookie:
         """
@@ -124,11 +264,12 @@ class Cookie:
         :param inputDict: the dictionary to read from
         :return:
         """
-        self.delim = inputDict["DELIM"]
         self.remoteAddress = inputDict["REMOTE_ADDRESS"]
         self.UA = inputDict["USER_AGENT"]
         self.viewerID = inputDict["VIEWER_ID"]
         self.hostURL = inputDict["HOST_URL"]
+        self.origin = inputDict["ORIGIN"]
+        self.CSRF = inputDict["CSRF"]
         return self
 
     def readRequest(self, requestObj: Imports.request) -> Cookie:
@@ -139,8 +280,9 @@ class Cookie:
         """
         self.remoteAddress = requestObj.remote_addr
         self.UA = requestObj.user_agent.string
-        self.hostURL = requestObj.host
-        self.delim = requestObj.headers.get("DELIM") or self.delim
+        from urllib.parse import urlparse
+        self.hostURL = f"{urlparse(requestObj.host_url).hostname}{f':{urlparse(requestObj.host_url).port}' if urlparse(requestObj.host_url).port is not None else ''}"
+        self.origin = f"{urlparse(requestObj.origin).hostname}{f':{urlparse(requestObj.origin).port}' if urlparse(requestObj.origin).port is not None else ''}"
         return self
 
     def readAnotherCookie(self, cookie: Cookie) -> Cookie:
@@ -149,11 +291,12 @@ class Cookie:
         :param cookie: another cookie object of self type
         :return:
         """
-        self.hostURL = cookie.hostURL
         self.remoteAddress = cookie.remoteAddress
         self.UA = cookie.UA
         self.viewerID = cookie.viewerID
-        self.delim = cookie.delim
+        self.hostURL = cookie.hostURL
+        self.origin = cookie.origin
+        self.CSRF = cookie.CSRF
         return self
 
     def attachToResponse(self, response: Imports.Response, fernetKey) -> Imports.Response:
@@ -163,7 +306,6 @@ class Cookie:
         :param fernetKey: the fernet string to encrypt the cookie with
         :return:
         """
-        response.headers.set("DELIM", self.delim)
         response.set_cookie("DEVICE_INFO", Imports.Fernet(fernetKey).encrypt(str(self).encode()).decode(), expires=Imports.time() + 12 * 30 * 24 * 60 * 60, httponly=True)
         response.set_cookie("DEVICE_INFO_CREATION", str(Imports.time()), expires=Imports.time() + 12 * 30 * 24 * 60 * 60, httponly=True)
         return response
@@ -181,19 +323,23 @@ class Cookie:
             self.readDict(cookieDict)
             return self
         except:
-            self.isValid = False
             return self
 
-    def checkValid(self):
+    def isReadSuccessfully(self):
         """
         Check if all values of current cookie seem valid, and none empty
         :return:
         """
         valid = False
-        if len(self.delim) > 0 and len(self.UA) > 0 and len(self.viewerID) > 0 and len(self.hostURL) > 0 and len(self.remoteAddress) > 0:
-            valid = True
-        self.isValid = valid
+        if len(self.UA) > 0 and len(self.viewerID) > 0 and len(self.hostURL) > 0 and len(self.remoteAddress) > 0 and len(self.CSRF) > 0: valid = True
         return valid
+
+    def originMatchesHost(self) -> bool:
+        """
+        Check if webpage request and websocket request origin from same place
+        :return:
+        """
+        return self.hostURL == self.origin
 
     def __eq__(self, other: Cookie):
         """
@@ -201,14 +347,58 @@ class Cookie:
         :param other: the other cookie object to compare to
         :return:
         """
-        return self.delim == other.delim and self.UA == other.UA and self.viewerID == other.viewerID and self.hostURL == other.hostURL and self.remoteAddress == other.remoteAddress and self.isValid == other.isValid
+        return self.UA == other.UA and self.viewerID == other.viewerID and self.hostURL == other.hostURL and self.remoteAddress == other.remoteAddress and self.CSRF == other.CSRF
 
     def __str__(self):
         """
         Convert self to a json dumped string
         :return:
         """
-        return Imports.dumps({"HOST_URL": self.hostURL, "REMOTE_ADDRESS": self.remoteAddress, "USER_AGENT": self.UA, "VIEWER_ID": self.viewerID, "DELIM": self.delim})
+        return Imports.dumps({"HOST_URL": self.hostURL, "REMOTE_ADDRESS": self.remoteAddress, "USER_AGENT": self.UA, "VIEWER_ID": self.viewerID, "ORIGIN": self.origin, "CSRF": self.CSRF})
+
+
+class File:
+    """
+    Internal Structure for receiving parts of Files uploaded by Visitor and storing when required by the server
+    """
+    def __init__(self):
+        self.initializedAt = Imports.time()
+        self.isReady = False
+        self.ID = ""
+        self.fileName = ""
+        self.fileType = ""
+        self.fileSize = 0
+        self.maxPartIndex = 0
+        self.lastAttachedPartIndex = -1
+        self.partsQueue = {}
+        self.finalData = b""
+
+    def acceptNewData(self, fileData:dict):
+        newPartIndex = fileData["CURRENT"]
+        data = Imports.b64decode(fileData["DATA"])
+        self.partsQueue[newPartIndex] = data
+        while True:
+            nextpartIndex = self.lastAttachedPartIndex + 1
+            if nextpartIndex in self.partsQueue:
+                self.finalData += self.partsQueue.pop(nextpartIndex)
+                self.lastAttachedPartIndex = nextpartIndex
+            else: break
+        if nextpartIndex >= self.maxPartIndex:
+            self.isReady = True
+
+    def getExtension(self):
+        try:
+            return self.fileName.split(".")[-1]
+        except:
+            return ""
+
+    def save(self, location: str, fileName:str|None=None):
+        while not self.isReady:
+            Imports.sleep(0.1)
+        if fileName: self.fileName = fileName
+        open(f"{location}/{self.fileName}", "wb").write(self.finalData)
+        self.partsQueue = {}
+        self.finalData = b""
 
 
 class BaseViewer:
@@ -219,6 +409,7 @@ class BaseViewer:
         self.__idleSender = True
         self.__turboIdle = True
         self.__activeCSRF: dict[str, dict[str, str]] = {}
+        self.__files:dict[int, File] = {}
         self.turboApp = turbo_app
         self.turboApp.activeViewers.append(self)
         self.queueHandler = Imports.QueueManager()
@@ -228,7 +419,6 @@ class BaseViewer:
         self.viewerID = _id
         self.WSList = WSList
         self.cookie: Cookie = cookie
-
 
     def __startFlaskSender(self, stream, htmlData, divName) -> None:
         """
@@ -243,7 +433,7 @@ class BaseViewer:
             except:
                 pass
 
-    def __stripSecurities(self, form: dict) -> dict|None:
+    def __cleanseForm(self, form: dict) -> dict | None:
         """
         Upon form submit through websocket CSRF and other security parameters are checked and removed and returns a clean form dictionary with no extra parameters. Returns None if Securities don't match
         :param form: Form dictionary received from client
@@ -261,7 +451,34 @@ class BaseViewer:
             receivedCSRF = form.pop("CSRF")
             if not receivedCSRF or receivedCSRF != expectedCSRF: return
             form["PURPOSE"] = self.hiddenToPurpose.get(realPurpose)
+            if "dynamicWebsiteUploadingFilesList" in form:
+                fileData = form.pop("dynamicWebsiteUploadingFilesList")
+
+                for formEntryName in fileData:
+                    form[formEntryName] = []
+                    for fileId in fileData[formEntryName]:
+                        fileDetails = fileData[formEntryName][fileId]
+                        fileObj = File()
+                        fileObj.ID = fileId
+                        fileObj.fileName = fileDetails.get("NAME", "")
+                        fileObj.fileSize = fileDetails.get("SIZE", 0)
+                        fileObj.fileType = fileDetails.get("TYPE", "")
+                        fileObj.maxPartIndex = fileDetails.get("MAXPART", 0)
+                        self.__files[fileId] = fileObj
+                        form[formEntryName].append(fileObj)
             return form
+
+    def __receiveFilePart(self, fileData: dict):
+        """
+        Upon form submit through websocket CSRF and other security parameters are checked and removed and returns a clean form dictionary with no extra parameters. Returns None if Securities don't match
+        :param fileData: FilePart dictionary received from client
+        :return:
+        """
+        if self.isActive():
+            fileID = fileData["FILEID"]
+            if fileID not in self.__files: return
+            fileObj = self.__files[fileID]
+            fileObj.acceptNewData(fileData)
 
     def isActive(self) -> bool:
         """
@@ -301,17 +518,18 @@ class BaseViewer:
         :return:
         """
         while True:  # while needed
-            try:
-                received = WSObj.receive(timeout=5)
-                if received:
-                    if self.isActive():
-                        stripped = self.__stripSecurities(Imports.loads(received))
+            received = WSObj.receive(timeout=5)
+            if received:
+                if self.isActive():
+                    dictReceived:dict = Imports.loads(received)
+                    if dictReceived.get("ISFILE", False)==True and "CURRENT" in dictReceived and "FILEID" in dictReceived and "DATA" in dictReceived:
+                        dictReceived.pop("ISFILE")
+                        Imports.Thread(target=self.__receiveFilePart, args=(dictReceived,)).start()
+                    else:
+                        stripped = self.__cleanseForm(dictReceived)
                         if stripped is not None: return stripped
-                    else: raise Errors.ViewerDisconnected
-            except:
-                Imports.Thread(target=self.turboApp.visitorLeftCallback, args=(self,)).start()
-                self.turboApp.activeViewers.remove(self)
-                return
+                else: raise Errors.ViewerDisconnected
+
 
     def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0, newDivAttributes: dict|None = None) -> str|None:
         """
@@ -374,20 +592,25 @@ class ModifiedTurbo(Imports.Turbo):
     """
     Derived TurboFlask's class with extra functionalities and methods
     """
-    def __init__(self, app=None, route='', visitorLeftCallback=None):
-        self.visitorLeftCallback = visitorLeftCallback
+    def __init__(self, baseApp:Imports.Flask=None, route='', visitorLeftCallback=None):
         self.__route = route
+        self.__pendingHandshakes ={}
         self.__WSWaitViewerIDs: list[str] = []
+        self.baseApp = baseApp
+        self.visitorLeftCallback = visitorLeftCallback
         self.activeViewers: list[BaseViewer] = []
         self.methods = TurboMethods
-        super().__init__(app)
+        super().__init__()
+        self.sock = Imports.Sock()
 
-    def init_app(self, app):
-        ws_route = app.config.setdefault('TURBO_WEBSOCKET_ROUTE', self.__route)
-        if ws_route:
-            self.sock = Imports.Sock()
-            self.sock.init_app(app)
-        app.context_processor(self.context_processor)
+    def initSock(self):
+        """
+        Initialise sock blueprint and context w.r.t. Websocket
+        :return:
+        """
+        self.baseApp.config.setdefault('TURBO_WEBSOCKET_ROUTE', None)
+        self.sock.init_app(self.baseApp)
+        self.baseApp.context_processor(self.context_processor)
 
     def checkAndWSBlockViewerID(self, viewerID):
         """
@@ -406,6 +629,34 @@ class ModifiedTurbo(Imports.Turbo):
             return True
         else:
             return False
+
+    def generateHandshake(self, viewerObj:BaseViewer) -> str:
+        """
+        Check if viewer ID has pending websocket connection to be made, if so remove from pending and assign the websocket to the viewer
+        :param viewerObj: Visitor who owns the handshake
+        :return:
+        """
+        def freeHandshake(handshake):
+            Imports.sleep(20)
+            if handshake in self.__pendingHandshakes:
+                del self.__pendingHandshakes[handshake]
+
+        while True:  # while needed
+            handshake = Imports.StringGen().AlphaNumeric(100, 200)
+            if handshake not in self.__pendingHandshakes:
+                self.__pendingHandshakes[handshake] = viewerObj
+                Imports.Thread(target=freeHandshake, args=(handshake,)).start()
+                return handshake
+
+    def consumeHandshake(self, handshake:str) -> BaseViewer|None:
+        """
+        Check if viewer ID has pending websocket connection to be made, if so remove from pending and assign the websocket to the viewer
+        :param handshake: Handshake string to return visitor for
+        :return:
+        """
+        try: return self.__pendingHandshakes.pop(handshake)
+        except: return None
+
 
     def consumeWSBlockedViewerID(self, viewerID):
         """
@@ -428,35 +679,61 @@ class ModifiedTurbo(Imports.Turbo):
                 return viewerID
 
 
-def createApps(formCallback, newVisitor, visitorLeft, appName:str="Live App", homeRoute:str="/", WSRoute:str="/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str="", bodyBase:str="", title:str="Live", resetOnDisconnect:bool=True):
+def createApps(formCallback, newVisitorCallback, visitorLeftCallback, appName:str= "Live App", homeRoute:str= "/", WSRoute:str= "/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str= "", bodyBase:str= "", title:str= "Live", resetOnDisconnect:bool=True):
     baseApp = Imports.Flask(appName)
-    turboApp = ModifiedTurbo(baseApp, WSRoute, visitorLeft)
+    turboApp = ModifiedTurbo(baseApp, WSRoute, visitorLeftCallback)
 
     @baseApp.route(homeRoute, methods=['GET'])
     def _root_url():
+        """
+        Executed for every viewer that opens the webpage. Checks and generates cookie if needed then sends the base page.
+        :return:
+        """
+        cookieObjRequest = Cookie().readRequest(Imports.request)
         cookieObj = Cookie().decrypt(Imports.request.cookies, fernetKey)
-        if not cookieObj.checkValid():
+        if (not cookieObj.isReadSuccessfully()) or cookieObj.remoteAddress!=cookieObjRequest.remoteAddress or cookieObj.UA!=cookieObjRequest.UA or cookieObj.hostURL!=cookieObjRequest.hostURL:
             cookieObj = Cookie().readRequest(Imports.request)
             cookieObj.viewerID = turboApp.generateViewerID()
-        else: turboApp.checkAndWSBlockViewerID(cookieObj.viewerID)
-        return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(extraHeads, WSRoute, title, resetOnDisconnect, bodyBase))), fernetKey)
+        else:
+            turboApp.checkAndWSBlockViewerID(cookieObj.viewerID)
+        viewerObj = BaseViewer(cookieObj.viewerID, [], cookieObj, turboApp)
+        handshake = turboApp.generateHandshake(viewerObj)
+        cookieObj.CSRF = handshake
+        return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(handshake, turboApp.turbo(), extraHeads, WSRoute, title, resetOnDisconnect, bodyBase))), fernetKey)
 
 
     @turboApp.sock.route(WSRoute)
     def _turbo_stream(WSObj):
+        """
+        Executed for every websocket connection request received. Handles initial handshake token exchange along with all future communication
+        :param WSObj: The Sock object that will be used for communication
+        :return:
+        """
         cookieObjRequest = Cookie().readRequest(Imports.request)
         cookieObj = Cookie().decrypt(Imports.request.cookies, fernetKey)
-        if cookieObjRequest.isValid and cookieObj == (Cookie().decrypt(Imports.request.cookies, fernetKey)):
-            if not cookieObj.checkValid() or not turboApp.consumeWSBlockedViewerID(cookieObj.viewerID): return
+        if cookieObj.isReadSuccessfully() and cookieObjRequest.originMatchesHost() and cookieObj.remoteAddress==cookieObjRequest.remoteAddress and  cookieObj.UA==cookieObjRequest.UA and  cookieObj.hostURL==cookieObjRequest.hostURL:
+            if not cookieObj.isReadSuccessfully() or not turboApp.consumeWSBlockedViewerID(cookieObj.viewerID): return
+            for handshakeWaitTimer in range(2):
+                try:
+                    handshake = WSObj.receive(timeout=5)
+                    if handshake is not None:
+                        viewerObj = turboApp.consumeHandshake(handshake)
+                        if viewerObj is None: return WSObj.close()
+                        else: break
+                except: return
+            else: return
             turboApp.clients[cookieObj.viewerID] = [WSObj]
-            viewerObj = BaseViewer(cookieObj.viewerID, [WSObj], cookieObj, turboApp)
-            newVisitor(viewerObj)
+            viewerObj.WSList = [WSObj]
+            Imports.Thread(target=newVisitorCallback, args=(viewerObj,)).start()
             while True:
-                received = viewerObj.turboReceive(WSObj)
-                Imports.Thread(target=formCallback, args=(viewerObj, received,)).start()
-                if received is None:
+                try:
+                    received = viewerObj.turboReceive(WSObj)
+                    if received is not None: Imports.Thread(target=formCallback, args=(viewerObj, received,)).start()
+                except:
+                    Imports.Thread(target=turboApp.visitorLeftCallback, args=(viewerObj,)).start()
                     turboApp.clients.pop(cookieObj.viewerID)
-                    break
+                    turboApp.activeViewers.remove(viewerObj)
+                    return
 
 
     @baseApp.before_request
@@ -475,4 +752,6 @@ def createApps(formCallback, newVisitor, visitorLeft, appName:str="Live App", ho
         else: address = Imports.request.remote_addr
         Imports.request.remote_addr = address
 
+
+    turboApp.initSock()
     return baseApp, turboApp
