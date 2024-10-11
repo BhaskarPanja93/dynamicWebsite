@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.4.0"
+__version__ = "1.4.1"
 __packagename__ = "dynamicWebsite"
 
 
@@ -130,7 +130,53 @@ class Extras:
                         }}
                         return base64
                     }}
-                    
+
+
+                    class FileToSend 
+                    {{
+                        constructor(fileID, file) 
+                        {{
+                            this.fileID = fileID;
+                            this.file = file;
+                            this.lastSentPartIndex = -1
+                            this.maxPartIndex = Math.ceil(file.size/window.chunk_size)-1;
+                        }}
+
+                        resumeSending()
+                        {{
+                            let mainInterval = setInterval(() =>
+                            {{
+                                if (window.web_sock.bufferedAmount < window.max_buffer_size)
+                                {{
+                                    clearInterval(mainInterval);
+                                    let indexToSend = ++this.lastSentPartIndex;
+                                    if (indexToSend>this.maxPartIndex) return;
+                                    
+                                    let reader = new FileReader();
+                                    reader.fileClass = this;
+                                    reader.partIndex = indexToSend;
+                                    reader.onload = function(e) 
+                                    {{ 
+                                        window.web_sock.send(
+                                        JSON.stringify(
+                                        {{
+                                            "ISFILE":true,
+                                            "FILEID":e.target.fileClass.fileID, 
+                                            "CURRENT":e.target.partIndex,
+                                            "DATA":base64ArrayBuffer(e.target.result)
+                                        }}
+                                        ));
+                                        console.log("sent", e.target.partIndex, e.target.fileClass.maxPartIndex);
+                                        e.target.fileClass.resumeSending();
+                                    }}
+                                    let start_byte = (indexToSend)*window.chunk_size
+                                    reader.readAsArrayBuffer(this.file.slice(start_byte, Math.min(this.file.size, start_byte+window.chunk_size)));
+                                }}
+                            }}, 200);
+                        }}
+                    }}
+
+
                     function submit_ws(form)
                     {{
                         let fileUploadListName = "dynamicWebsiteUploadingFilesList";
@@ -160,77 +206,17 @@ class Extras:
                         window.web_sock.send(JSON.stringify(form_data));
                         for (const [fileID, fileObj] of Object.entries(filesToUpload)) 
                         {{
-                            window.files[fileID] = fileObj;
-                            window.global_coroutines[fileID] = setInterval(function (fileID) 
-                            {{
-                                if (window.current_file_id==null)
-                                {{
-                                    
-                                    window.current_file_id = fileID;
-                                    console.log("Sending fileID:", fileID);
-                                    clearInterval(window.global_coroutines[fileID]);
-                                    let fileObj = window.files[fileID];
-                                    window.transferred_bytes = 0;
-                                    window.to_be_transferred_bytes = fileObj.size;
-                                    
-                                    delete window.global_coroutines[fileID];
-                                    delete window.files[fileID];
-
-                                    window.current_part_index = 0;
-                                    window.last_part_index = Math.ceil(fileObj.size/window.chunk_size)-1;
-                                    for (let partIndex=0; partIndex<=window.last_part_index; partIndex++)
-                                    {{
-                                        window.file_coroutines[partIndex] = setInterval(function (fileObj, artIndex) 
-                                        {{
-                                            if (window.is_reader_idle && window.reader.readyState != window.reader.LOADING && window.web_sock.bufferedAmount < window.max_buffer_size)
-                                            {{
-                                                window.is_reader_idle = false;
-                                                clearInterval(window.file_coroutines[partIndex]);
-                                                window.current_part_index = partIndex
-                                                delete window.file_coroutines[partIndex];
-                                                let start_byte = (partIndex)*window.chunk_size
-                                                window.reader.readAsArrayBuffer(fileObj.slice(start_byte, Math.min(fileObj.size, start_byte+window.chunk_size)));
-                                            }}
-                                        }}, 20, fileObj, partIndex);
-                                    }}
-
-                                }}
-                            }}, 20, fileID);
+                            let fileSender = new FileToSend(fileID, fileObj);
+                            for (let i=0;i<10;i++) fileSender.resumeSending()
                         }}
                         return false;
                     }}
 
-                    window.global_coroutines = {{}};
-                    window.file_coroutines = {{}};
-                    window.files = {{}};
                     window.transferred_bytes = 0;
                     window.to_be_transferred_bytes = 0;
                     
-                    window.chunk_size = 1024*200;
-                    window.max_buffer_size = 1024*100*10;
-                    
-                    window.reader = new FileReader();
-                    window.is_reader_idle = true;
-                    
-                    window.current_file_id = null;
-                    window.current_part_index = null;
-                    window.last_part_index = null;
-                    
-                    window.reader.onload = function(e) 
-                    {{
-                        window.web_sock.send(JSON.stringify(
-                        {{
-                            "ISFILE":true,
-                            "FILEID":window.current_file_id, 
-                            "CURRENT":window.current_part_index,
-                            "DATA":base64ArrayBuffer(e.target.result)
-                        }}
-                        ));
-                        window.transferred_bytes += window.reader.result.byteLength;
-                        console.log(window.current_file_id, window.current_part_index, window.last_part_index);
-                        if (Object.keys(window.file_coroutines).length==0) window.current_file_id = null;
-                        window.is_reader_idle = true;
-                    }}
+                    window.chunk_size = 1024*1024*16;
+                    window.max_buffer_size = 1024*1024*256;
 
                     Turbo.disconnectStreamSource(window.web_sock);
                     window.web_sock = new WebSocket(`ws${{location.protocol.substring(4)}}//${{location.host}}{WSRoute}`); 
@@ -361,15 +347,14 @@ class File:
     """
     Internal Structure for receiving parts of Files uploaded by Visitor and storing when required by the server
     """
-    def __init__(self):
-        self.initializedAt = Imports.time()
+    def __init__(self, viewer: BaseViewer):
+        self.viewer = viewer
         self.isReady = False
         self.ID = ""
         self.fileName = ""
         self.fileType = ""
         self.fileSize = 0
         self.maxPartIndex = 0
-        self.lastAttachedPartIndex = -1
         self.partsQueue = {}
         self.finalData = b""
 
@@ -377,14 +362,6 @@ class File:
         newPartIndex = fileData["CURRENT"]
         data = Imports.b64decode(fileData["DATA"])
         self.partsQueue[newPartIndex] = data
-        while True:
-            nextpartIndex = self.lastAttachedPartIndex + 1
-            if nextpartIndex in self.partsQueue:
-                self.finalData += self.partsQueue.pop(nextpartIndex)
-                self.lastAttachedPartIndex = nextpartIndex
-            else: break
-        if nextpartIndex >= self.maxPartIndex:
-            self.isReady = True
 
     def getExtension(self):
         try:
@@ -393,8 +370,19 @@ class File:
             return ""
 
     def save(self, location: str, fileName:str|None=None):
+        nextpartIndex = 0
         while not self.isReady:
-            Imports.sleep(0.1)
+            if nextpartIndex in self.partsQueue:
+                self.finalData += self.partsQueue.pop(nextpartIndex)
+                nextpartIndex += 1
+            else:
+                if nextpartIndex > self.maxPartIndex:
+                    if self.ID in self.viewer.pendingFiles: del self.viewer.pendingFiles[self.ID]
+                    self.isReady = True
+                    break
+                else: Imports.sleep(1)
+
+
         if fileName: self.fileName = fileName
         open(f"{location}/{self.fileName}", "wb").write(self.finalData)
         self.partsQueue = {}
@@ -409,7 +397,7 @@ class BaseViewer:
         self.__idleSender = True
         self.__turboIdle = True
         self.__activeCSRF: dict[str, dict[str, str]] = {}
-        self.__files:dict[int, File] = {}
+        self.pendingFiles:dict[str, File] = {}
         self.turboApp = turbo_app
         self.turboApp.activeViewers.append(self)
         self.queueHandler = Imports.QueueManager()
@@ -458,13 +446,13 @@ class BaseViewer:
                     form[formEntryName] = []
                     for fileId in fileData[formEntryName]:
                         fileDetails = fileData[formEntryName][fileId]
-                        fileObj = File()
+                        fileObj = File(self)
                         fileObj.ID = fileId
                         fileObj.fileName = fileDetails.get("NAME", "")
                         fileObj.fileSize = fileDetails.get("SIZE", 0)
                         fileObj.fileType = fileDetails.get("TYPE", "")
                         fileObj.maxPartIndex = fileDetails.get("MAXPART", 0)
-                        self.__files[fileId] = fileObj
+                        self.pendingFiles[fileId] = fileObj
                         form[formEntryName].append(fileObj)
             return form
 
@@ -476,8 +464,8 @@ class BaseViewer:
         """
         if self.isActive():
             fileID = fileData["FILEID"]
-            if fileID not in self.__files: return
-            fileObj = self.__files[fileID]
+            if fileID not in self.pendingFiles: return
+            fileObj = self.pendingFiles[fileID]
             fileObj.acceptNewData(fileData)
 
     def isActive(self) -> bool:
