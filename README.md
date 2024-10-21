@@ -1,4 +1,4 @@
-# dynamicWebsite v1.4.1
+# dynamicWebsite v1.4.2
 
 ```pip install dynamicWebsite --upgrade```
 
@@ -16,36 +16,45 @@ python3 -m pip install dynamicWebsite --upgrade
 #### <br><br>Using this program is as simple as:
 ```
 
+from dynamicWebsite import *
+
+
 def process_form(viewerObj: BaseViewer, form: dict):
-    if form is not None:
-        print(f"[{viewerObj.viewerID}] sent: ", form)
-    else:
-        print("Disconnected: ", viewerObj.viewerID)
+    if form.get("PURPOSE") == "SHOW_IMAGE1":
+        initial = f'''<img src="" alt="IMG1"></img>'''
+        viewerObj.queueTurboAction(initial, "mainDiv", turboApp.methods.update)
+    elif form.get("PURPOSE") == "SHOW_IMAGE2":
+        initial = f'''<img src="" alt="IMG2"></img>'''
+        viewerObj.queueTurboAction(initial, "mainDiv", turboApp.methods.update)
+
+
 
 def newVisitor(viewerObj: BaseViewer):
-    initial = f"""
-    <h2>Submit Song Name</h2>
-    <div id="searchform" class="container"></div>
-    <div id="audioplayer" class="container"></div>    
-    <div id="status_create"></div>
-    <div id="debug" class="container"></div>
-    """
-    viewerObj.queueTurboAction(initial, "mainDiv", viewerObj.turboApp.methods.update)
-    sendForm(viewerObj)
-    
+    initial = f'''
+               <form onsubmit="return submit_ws(this)">
+               {viewerObj.addCSRF("SHOW_IMAGE1")}
+                   <input type="text" name="username"><br>
+                   <input type="password" name="password"><br>
+                   <input type="file" name="ball" multiple><br>
+                   <button type="submit">Search</button>
+               </form>
+               '''
+    viewerObj.queueTurboAction(initial, "mainDiv", turboApp.methods.update)
+
+
 def visitorLeft(viewerObj: BaseViewer):
-    print("Visitor Left")
+    print(f"Visitor Left: {viewerObj.viewerID}")
+
 
 extraHeads = ""
-fernetKey = 'GNwHvssnLQVKYPZk0D_Amy9m3EeSvi6Y1FiHfTO8F48='
-appName = "Song Player"
-homePageRoute = "/song"
-WSRoute = f"/song_ws"
+fernetKey = 'JJafcmKx6WRzZKhC8THl7tfXce2BVdYEntGHPJNFwSU='
+bodyBase = """<body><div id="mainDiv"></div></body>"""
 title = "Song Player"
 resetOnDisconnect = False
-baseApp, turboApp = createApps(process_form, newVisitor, visitorLeft, appName, homePageRoute, WSRoute, fernetKey, extraHeads, title, resetOnDisconnect)
+baseApp, turboApp = createApps(process_form, newVisitor, visitorLeft, "Song Player", "/", "/", fernetKey, extraHeads, bodyBase, title, resetOnDisconnect)
 
-turboApp.run("0.0.0.0", 5000)
+baseApp.run("0.0.0.0", 5000)
+
 ```
 
 
