@@ -1,4 +1,4 @@
-# dynamicWebsite v1.4.2
+# dynamicWebsite v1.4.3
 
 ```pip install dynamicWebsite --upgrade```
 
@@ -51,7 +51,7 @@ fernetKey = 'JJafcmKx6WRzZKhC8THl7tfXce2BVdYEntGHPJNFwSU='
 bodyBase = """<body><div id="mainDiv"></div></body>"""
 title = "Song Player"
 resetOnDisconnect = False
-baseApp, turboApp = createApps(process_form, newVisitor, visitorLeft, "Song Player", "/", "/", fernetKey, extraHeads, bodyBase, title, resetOnDisconnect)
+baseApp, turboApp = createApps(process_form, newVisitor, visitorLeft, "Song Player", "/", fernetKey, extraHeads, bodyBase, title, resetOnDisconnect)
 
 baseApp.run("0.0.0.0", 5000)
 

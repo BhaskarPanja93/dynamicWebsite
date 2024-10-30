@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.4.2"
+__version__ = "1.4.3"
 __packagename__ = "dynamicWebsite"
 
 
@@ -519,9 +519,10 @@ class BaseViewer:
                 else: raise Errors.ViewerDisconnected
 
 
-    def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0, newDivAttributes: dict|None = None) -> str|None:
+    def queueTurboAction(self, htmlData: Imports.Any, divID: str, method: TurboMethods, nonBlockingWait: float = 0, removeAfter: float = 0, blockingWait: float = 0, forceFlush=False, newDivAttributes: dict|None = None) -> str|None:
         """
         Method to queue live update actions to be executed on current visitor. All actions get queued up and executed sequentially
+        :param forceFlush: Flush content to client even if its same in server cache
         :param htmlData: The data to be sent to the client, can be of type str or bytes or any JSON serializable or an object with the __str__ method
         :param divID: The target div ID
         :param method: The kind of action to perform
@@ -570,7 +571,7 @@ class BaseViewer:
             self.queueHandler.queueAction(self.__startFlaskSender, 0, False, None, None, None, self.turboApp.remove(divID), "", divID)
 
         elif method in [self.turboApp.methods.update, self.turboApp.methods.update.value]:
-            if divID not in self.clientContentCache or self.clientContentCache[divID] != htmlData:
+            if forceFlush or divID not in self.clientContentCache or self.clientContentCache[divID] != htmlData:
                 self.queueHandler.queueAction(self.__startFlaskSender, 0, False, None, None, None, self.turboApp.update(htmlData, divID), htmlData, divID)
             if removeAfter: self.queueTurboAction("", divID, self.turboApp.methods.remove, removeAfter, 0, removeAfter)
 
@@ -667,9 +668,9 @@ class ModifiedTurbo(Imports.Turbo):
                 return viewerID
 
 
-def createApps(formCallback, newVisitorCallback, visitorLeftCallback, appName:str= "Live App", homeRoute:str= "/", WSRoute:str= "/ws", fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str= "", bodyBase:str= "", title:str= "Live", resetOnDisconnect:bool=True):
+def createApps(formCallback, newVisitorCallback, visitorLeftCallback, appName:str= "Live App", homeRoute:str= "/",  fernetKey:str=Imports.Fernet.generate_key(), extraHeads:str= "", bodyBase:str= "", title:str= "Live", resetOnDisconnect:bool=True):
     baseApp = Imports.Flask(appName)
-    turboApp = ModifiedTurbo(baseApp, WSRoute, visitorLeftCallback)
+    turboApp = ModifiedTurbo(baseApp, homeRoute, visitorLeftCallback)
 
     @baseApp.route(homeRoute, methods=['GET'])
     def _root_url():
@@ -687,10 +688,10 @@ def createApps(formCallback, newVisitorCallback, visitorLeftCallback, appName:st
         viewerObj = BaseViewer(cookieObj.viewerID, [], cookieObj, turboApp)
         handshake = turboApp.generateHandshake(viewerObj)
         cookieObj.CSRF = handshake
-        return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(handshake, turboApp.turbo(), extraHeads, WSRoute, title, resetOnDisconnect, bodyBase))), fernetKey)
+        return cookieObj.attachToResponse(Imports.make_response(Imports.render_template_string(Extras.baseHTML(handshake, turboApp.turbo(), extraHeads, homeRoute, title, resetOnDisconnect, bodyBase))), fernetKey)
 
 
-    @turboApp.sock.route(WSRoute)
+    @turboApp.sock.route(homeRoute)
     def _turbo_stream(WSObj):
         """
         Executed for every websocket connection request received. Handles initial handshake token exchange along with all future communication
