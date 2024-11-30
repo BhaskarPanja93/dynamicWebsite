@@ -1,5 +1,5 @@
 from __future__ import annotations
-__version__ = "1.4.3"
+__version__ = "1.4.4"
 __packagename__ = "dynamicWebsite"
 
 
@@ -391,7 +391,7 @@ class File:
 
 class BaseViewer:
     """
-    Internal (BASE) Datastructure to hold all information regarding individual visitor
+    Internal (BASE) DataStructure to hold all information regarding individual visitor
     """
     def __init__(self, _id: str, WSList: list, cookie: Cookie, turbo_app: ModifiedTurbo):
         self.__idleSender = True
@@ -407,6 +407,7 @@ class BaseViewer:
         self.viewerID = _id
         self.WSList = WSList
         self.cookie: Cookie = cookie
+        self.privateData = None
 
     def __startFlaskSender(self, stream, htmlData, divName) -> None:
         """
